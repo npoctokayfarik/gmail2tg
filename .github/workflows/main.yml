@@ -2,7 +2,7 @@ name: Gmail to Telegram
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # каждые 5 минут
+    - cron: "*/15 * * * *"   # каждые 15 минут
   workflow_dispatch:
 
 jobs:
@@ -37,7 +37,5 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
-          RUN_MODE: once
-          MAX_EMAILS_PER_POLL: 2
-          PER_EMAIL_DELAY: 2.0
+          MAX_EMAILS_PER_POLL: 5
         run: python main.py
