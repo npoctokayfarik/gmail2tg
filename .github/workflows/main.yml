@@ -1,0 +1,43 @@
+name: Gmail to Telegram
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # каждые 5 минут
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write Google JSON files
+        shell: bash
+        run: |
+          cat > credentials.json << 'EOF'
+          ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          EOF
+
+          cat > token.json << 'EOF'
+          ${{ secrets.GOOGLE_TOKEN_JSON }}
+          EOF
+
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TARGET_CHAT_ID: ${{ secrets.TARGET_CHAT_ID }}
+          RUN_MODE: once
+          MAX_EMAILS_PER_POLL: 2
+          PER_EMAIL_DELAY: 2.0
+        run: python main.py
