@@ -2,6 +2,17 @@ import os
 import asyncio
 from dotenv import load_dotenv
 from telegram import Bot
+import os
+import json
+
+# создаем файлы из env (для Render)
+if os.getenv("GOOGLE_CREDENTIALS_JSON"):
+    with open("credentials.json", "w", encoding="utf-8") as f:
+        f.write(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+
+if os.getenv("GOOGLE_TOKEN_JSON"):
+    with open("token.json", "w", encoding="utf-8") as f:
+        f.write(os.getenv("GOOGLE_TOKEN_JSON"))
 
 from gmail_client import (
     get_gmail_service,
