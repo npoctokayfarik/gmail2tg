@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 from dotenv import load_dotenv
 from telegram import Bot
@@ -10,6 +11,8 @@ from gmail_client import (
     get_message,
     mark_as_read,
 )
+
+STATE_FILE = "state.json"
 
 
 def _write_if_env(path: str, env_name: str) -> None:
@@ -39,6 +42,21 @@ def _header(payload, name: str) -> str:
     return ""
 
 
+def load_state() -> dict:
+    if not os.path.exists(STATE_FILE):
+        return {}
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(state: dict) -> None:
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
 def build_digest(messages) -> str:
     if not messages:
         return ""
@@ -61,66 +79,68 @@ def build_digest(messages) -> str:
     return "\n".join(lines)
 
 
-async def send_once_no_wait(bot: Bot, chat_id: int, text: str) -> bool:
-    """
-    1 попытка отправить.
-    Если flood (RetryAfter) — НЕ ждём 900 секунд, а выходим.
-    Следующий запуск Actions попробует снова.
-    """
-    try:
-        await bot.send_message(chat_id=chat_id, text=text)
-        return True
-    except RetryAfter as e:
-        wait_s = int(getattr(e, "retry_after", 5))
-        print(f"TG FLOOD: retry after {wait_s}s. Exit now.")
-        return False
-    except (TimedOut, NetworkError) as e:
-        print(f"TG NETWORK/TIMEOUT: {e}. Exit now.")
-        return False
+async def send_safe(bot: Bot, chat_id: int, text: str) -> None:
+    while True:
+        try:
+            await bot.send_message(chat_id=chat_id, text=text)
+            return
+        except RetryAfter as e:
+            wait_s = int(getattr(e, "retry_after", 5)) + 1
+            await asyncio.sleep(wait_s)
+        except (TimedOut, NetworkError):
+            await asyncio.sleep(3)
 
 
-async def main():
+async def poll_loop():
     load_dotenv()
 
-    # GitHub Actions: файлы создаются из secrets
+    # Для Render будем хранить эти файлы на диске (или задавать через env)
     _write_if_env("credentials.json", "GOOGLE_CREDENTIALS_JSON")
     _write_if_env("token.json", "GOOGLE_TOKEN_JSON")
 
     tg_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
     chat_id_raw = (os.getenv("TARGET_CHAT_ID") or "").strip()
-    max_emails = _get_int("MAX_EMAILS_PER_POLL", 5)
+
+    poll_seconds = _get_int("POLL_SECONDS", 30)
+    max_emails = _get_int("MAX_EMAILS_PER_POLL", 3)
 
     if not tg_token:
         raise SystemExit("❌ TELEGRAM_BOT_TOKEN пустой")
     if not chat_id_raw:
         raise SystemExit("❌ TARGET_CHAT_ID пустой")
 
-    try:
-        chat_id = int(chat_id_raw)
-    except ValueError:
-        raise SystemExit("❌ TARGET_CHAT_ID должен быть числом")
+    chat_id = int(chat_id_raw)
 
     bot = Bot(token=tg_token)
     gmail = get_gmail_service()
+    state = load_state()
 
-    unread = list_unread(gmail, max_results=max_emails)
-    if not unread:
-        print("No unread emails")
-        return
+    await send_safe(bot, chat_id, "✅ Gmail2TG 24/7: запущен.")
 
-    messages = [get_message(gmail, item["id"]) for item in unread]
-    text = build_digest(messages)
+    while True:
+        try:
+            unread = list_unread(gmail, max_results=max_emails)
 
-    ok = await send_once_no_wait(bot, chat_id, text)
-    if not ok:
-        # не помечаем письма прочитанными — отправим позже
-        return
+            if unread:
+                messages = [get_message(gmail, item["id"]) for item in unread]
+                text = build_digest(messages)
 
-    for item in unread:
-        mark_as_read(gmail, item["id"])
+                # отправляем 1 сообщением
+                await send_safe(bot, chat_id, text)
 
-    print(f"Done. Sent {len(messages)} emails.")
+                # отмечаем прочитанными
+                for item in unread:
+                    mark_as_read(gmail, item["id"])
+
+            # сохраняем state (на будущее расширения)
+            save_state(state)
+
+        except Exception as e:
+            # не падаем, просто лог
+            print("LOOP ERROR:", e)
+
+        await asyncio.sleep(max(10, poll_seconds))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(poll_loop())
